@@ -1,0 +1,60 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCOUNT_ID = 'your-aws-account-id' // replace with your AWS account ID
+        AWS_REGION = 'us-east-1'
+        ECR_REPO_NAME = 'your-repo-name'
+        IMAGE_TAG = 'latest'
+        KUBERNETES_DEPLOYMENT_NAME = 'your-deployment-name'
+        KUBERNETES_NAMESPACE = 'default'
+    }
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageName = "${ECR_REPO_NAME}:${IMAGE_TAG}"
+                    sh "docker build -t ${imageName} ."
+                }
+            }
+        }
+        stage('Authenticate with ECR') {
+            steps {
+                script {
+                    def ecrLogin = sh(
+                        script: "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com",
+                        returnStdout: true
+                    ).trim()
+                    echo ecrLogin
+                }
+            }
+        }
+        stage('Tag Docker Image') {
+            steps {
+                script {
+                    def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+                    sh "docker tag ${ECR_REPO_NAME}:${IMAGE_TAG} ${ecrUrl}:${IMAGE_TAG}"
+                }
+            }
+        }
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+                    sh "docker push ${ecrUrl}:${IMAGE_TAG}"
+                }
+            }
+        }
+        stage('Update Kubernetes Deployment') {
+            steps {
+                script {
+                    def image = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}:${IMAGE_TAG}"
+                    sh """
+                        kubectl set image deployment/${KUBERNETES_DEPLOYMENT_NAME} \
+                        -n ${KUBERNETES_NAMESPACE} \
+                        ${KUBERNETES_DEPLOYMENT_NAME}=${image}
+                    """
+                }
+            }
+        }
+    }
+}
