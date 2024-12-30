@@ -1,0 +1,61 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCOUNT_ID = 'your-aws-account-id' // replace with your AWS account ID
+        AWS_REGION = 'us-east-1'
+        ECR_REPO_NAME = 'your-repo-name'
+        IMAGE_TAG = 'latest'
+        ECS_CLUSTER_NAME = 'your-cluster-name'
+        ECS_SERVICE_NAME = 'your-service-name'
+    }
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageName = "${ECR_REPO_NAME}:${IMAGE_TAG}"
+                    sh "docker build -t ${imageName} ."
+                }
+            }
+        }
+        stage('Authenticate with ECR') {
+            steps {
+                script {
+                    def ecrLogin = sh(
+                        script: "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com",
+                        returnStdout: true
+                    ).trim()
+                    echo ecrLogin
+                }
+            }
+        }
+        stage('Tag Docker Image') {
+            steps {
+                script {
+                    def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+                    sh "docker tag ${ECR_REPO_NAME}:${IMAGE_TAG} ${ecrUrl}:${IMAGE_TAG}"
+                }
+            }
+        }
+        stage('Push Docker Image to ECR') {
+            steps {
+                script {
+                    def ecrUrl = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO_NAME}"
+                    sh "docker push ${ecrUrl}:${IMAGE_TAG}"
+                }
+            }
+        }
+        stage('Deploy to ECS') {
+            steps {
+                script {
+                    sh """
+                        aws ecs update-service \
+                        --cluster ${ECS_CLUSTER_NAME} \
+                        --service ${ECS_SERVICE_NAME} \
+                        --force-new-deployment \
+                        --region ${AWS_REGION}
+                    """
+                }
+            }
+        }
+    }
+}
